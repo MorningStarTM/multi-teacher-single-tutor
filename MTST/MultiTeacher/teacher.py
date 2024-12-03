@@ -4,20 +4,25 @@ import random
 import grid2op
 import numpy as np
 import pandas as pd
+from pathlib import Path
+from collections import defaultdict
 from grid2op.Reward import L2RPNSandBoxScore
 from lightsim2grid import LightSimBackend
 
 
 
 class Teacher:
-    def __init__(self, config) -> None:
+    def __init__(self, config, **kwargs) -> None:
         self.config = config
         self.env = grid2op.make(self.config.env_name, reward_class=L2RPNSandBoxScore,
                                 backend=LightSimBackend())
 
         self.DATA_PATH = self.env.get_path_env() #'C:\\Users\\Ernest\\data_grid2op\\l2rpn_wcci_2022'  # for demo only, use your own dataset
         self.SCENARIO_PATH = self.env.chronics_handler.path #'C:\\Users\\Ernest\\data_grid2op\\l2rpn_wcci_2022'
-        self.SAVE_PATH = 'dreamer\\asr\\data'
+        if kwargs.get('save_path'):
+            self.SAVE_PATH = kwargs.get('save_path')
+        else:
+            self.SAVE_PATH = Path("MTST\\data")
 
 
 
@@ -59,13 +64,113 @@ class Teacher:
 
 
 
-    def save_sample(self, obs, action, obs_, dst_step, line_to_disconnect, save_path):
-        os.makedirs(save_path, exist_ok=True)
+    def get_substation_connections(self):
+        """
+        Returns a dictionary with each substation ID and the number of powerlines connected to it.
+
+        Parameters:
+        - env: Grid2Op environment instance
+
+        Returns:
+        - substation_connections: Dictionary with substation ID as key and connection count as value
+        """
+        # Initialize a dictionary to store the number of connections for each substation
+        substation_connections = defaultdict(int)
+
+        # Retrieve powerline-to-substation mappings
+        line_or_to_subid = self.env.line_or_to_subid  # Array of origin substations for each powerline
+        line_ex_to_subid = self.env.line_ex_to_subid  # Array of extremity substations for each powerline
+
+        # Count connections for each substation
+        for line_id in range(self.env.n_line):
+            origin_substation = line_or_to_subid[line_id]
+            extremity_substation = line_ex_to_subid[line_id]
+            
+            # Increment the connection count for each substation
+            substation_connections[origin_substation] += 1
+            substation_connections[extremity_substation] += 1
+
+        return substation_connections
+    
+
+
+
+    def find_most_connected_substations(self, substation_connections, top_n=5):
+        """
+        Finds the top N substations with the highest number of powerline connections.
+
+        Parameters:
+        - substation_connections: Dictionary with substation ID as key and connection count as value
+        - top_n: Number of top substations to return
+
+        Returns:
+        - List of tuples (substation_id, connection_count) sorted by connection count in descending order
+        """
+        # Sort substations by the number of connections in descending order
+        sorted_substations = sorted(substation_connections.items(), key=lambda x: x[1], reverse=True)
+        
+        return sorted_substations[:top_n]
+    
+
+
+    def find_powerlines_connected_to_substations(self, target_substations):
+        """
+        Finds all powerline IDs that are connected to the given substations.
+
+        Parameters:
+        - env: Grid2Op environment instance
+        - target_substations: List of substation IDs to check for connections
+
+        Returns:
+        - connected_powerlines: Dictionary where each substation ID is a key and 
+        the value is a list of powerline IDs connected to that substation
+        """
+        connected_powerlines = {sub: [] for sub in target_substations}
+
+        # Retrieve powerline-to-substation mappings
+        line_or_to_subid = self.env.line_or_to_subid  # Origin substation for each powerline
+        line_ex_to_subid = self.env.line_ex_to_subid  # Extremity substation for each powerline
+
+        # Loop through each powerline to find connections to target substations
+        for line_id in range(self.env.n_line):
+            origin_substation = line_or_to_subid[line_id]
+            extremity_substation = line_ex_to_subid[line_id]
+
+            # Check if origin or extremity matches any target substation
+            if origin_substation in target_substations:
+                connected_powerlines[origin_substation].append(line_id)
+            if extremity_substation in target_substations:
+                connected_powerlines[extremity_substation].append(line_id)
+
+        return connected_powerlines
+
+
+
+    def line2attack(self):
+        substation_connections = self.get_substation_connections()
+        top_substations = self.find_most_connected_substations(substation_connections, top_n=10)
+        target_substations = [item[0] for item in top_substations]
+
+        LINES2ATTACK = []
+        # Find powerlines connected to the target substations
+        result = self.find_powerlines_connected_to_substations(target_substations)
+
+        # Print the result
+        for substation, lines in result.items():
+            for i in lines:
+                LINES2ATTACK.append(i)
+        
+        return LINES2ATTACK
+    
+
+
+    def save_sample(self, obs, action, obs_, dst_step, line_to_disconnect):
+        os.makedirs(self.SAVE_PATH, exist_ok=True)
         if action == self.env.action_space({}):
             return None  # not necessary to save a "do nothing" action
         act_or, act_ex, act_gen, act_load = [], [], [], []
-        for key, val in action.as_dict()['change_bus_vect'][
-            action.as_dict()['change_bus_vect']['modif_subs_id'][0]].items():
+        for key, val in action.as_dict()['set_bus_vect'][
+            action.as_dict()['set_bus_vect']['modif_subs_id'][0]].items():
             if val['type'] == 'line (extremity)':
                 act_ex.append(key)
             elif val['type'] == 'line (origin)':
@@ -86,7 +191,7 @@ class Teacher:
                             self.env.line_ex_to_subid[line_to_disconnect], 
                             str(np.where(obs.rho > 1)[0].tolist()),  # Convert list to string
                             str([i for i in np.around(obs.rho[np.where(obs.rho > 1)], 2)]),  # Convert list to string
-                            action.as_dict()['change_bus_vect']['modif_subs_id'][0], 
+                            action.as_dict()['set_bus_vect']['modif_subs_id'][0], 
                             str(act_or),  # Convert list to string
                             str(act_ex),  # Convert list to string
                             str(act_gen),  # Convert list to string
@@ -101,11 +206,11 @@ class Teacher:
                 pd.DataFrame(np.concatenate((obs.to_vect(), obs_.to_vect(), action.to_vect())).reshape([1, -1]))
             ),
             axis=1
-        ).to_csv(os.path.join(save_path, 'Experiences1.csv'), index=0, header=0, mode='a')
+        ).to_csv(os.path.join(self.SAVE_PATH, 'Experiences1.csv'), index=0, header=0, mode='a')
 
 
 
-    def generate(self, LINES2ATTACK):
+    def generate(self, LINES2ATTACK, substations:list):
         for episode in range(self.NUM_EPISODES):
             # traverse all attacks
             for line_to_disconnect in LINES2ATTACK:
@@ -139,6 +244,6 @@ class Teacher:
                         continue
                     else:
                         # search a greedy action
-                        action = self.topology_search(env)
+                        action = self.topology_search(dst_step=dst_step, substations=substations)
                         obs_, reward, done, _ = env.step(action)
-                        self.save_sample(obs, action, obs_, dst_step, line_to_disconnect, self.SAVE_PATH)
+                        self.save_sample(obs, action, obs_, dst_step, line_to_disconnect)
