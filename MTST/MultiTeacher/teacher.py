@@ -26,7 +26,7 @@ class Teacher:
 
 
     def get_sub_actions(self, substations:list):
-        all_actions = []
+        all_actions = [self.env.action_space({})]
         for sub in substations:
             topo = self.env.action_space.get_all_unitary_topologies_set(self.env.action_space, sub)
             for act in topo:
@@ -36,16 +36,17 @@ class Teacher:
 
     
 
-    def topology_search(self, dst_step):
+    def topology_search(self, dst_step, substations:list):
         obs = self.env.get_obs()
         min_rho, overflow_id = obs.rho.max(), obs.rho.argmax()
         print("step-%s, line-%s(from bus-%d to bus-%d) overflows, max rho is %.5f" %
             (dst_step, overflow_id, self.env.line_or_to_subid[overflow_id],
             self.env.line_ex_to_subid[overflow_id], obs.rho.max()))
-        all_actions = self.env.action_space.get_all_unitary_topologies_change(self.env.action_space)
+        #all_actions = self.env.action_space.get_all_unitary_topologies_set(self.env.action_space)
+        sub_actions = self.get_sub_actions(substations)
         action_chosen = self.env.action_space({})
         tick = time.time()
-        for action in all_actions:
+        for action in sub_actions:
             if not self.env._game_rules(action, self.env):
                 continue
             obs_, _, done, _ = obs.simulate(action)
