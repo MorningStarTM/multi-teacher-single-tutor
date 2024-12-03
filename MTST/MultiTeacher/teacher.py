@@ -8,6 +8,7 @@ from pathlib import Path
 from collections import defaultdict
 from grid2op.Reward import L2RPNSandBoxScore
 from lightsim2grid import LightSimBackend
+from grid2op.Exceptions import *
 
 
 
@@ -209,8 +210,72 @@ class Teacher:
         ).to_csv(os.path.join(self.SAVE_PATH, 'Experiences1.csv'), index=0, header=0, mode='a')
 
 
+    def generate(self, LINES2ATTACK, substations: list):
+        for episode in range(self.NUM_EPISODES):
+            # traverse all attacks
+            for line_to_disconnect in LINES2ATTACK:
+                try:
+                    # if lightsim2grid is available, use it.
+                    from lightsim2grid import LightSimBackend
+                    backend = LightSimBackend()
+                    env = grid2op.make(dataset=self.DATA_PATH, chronics_path=self.SCENARIO_PATH, backend=backend)
+                except:
+                    env = grid2op.make(dataset=self.DATA_PATH, chronics_path=self.SCENARIO_PATH)
 
-    def generate(self, LINES2ATTACK, substations:list):
+                env.chronics_handler.shuffle(shuffler=lambda x: x[np.random.choice(len(x), size=len(x), replace=False)])
+                
+                # traverse all scenarios
+                for chronic in range(len(os.listdir(self.SCENARIO_PATH))):
+                    try:
+                        env.reset()
+                        dst_step = episode * 72 + random.randint(0, 72)  # a random sampling every 6 hours
+                        print('\n\n' + '*' * 50 + '\nScenario[%s]: at step[%d], disconnect line-%d(from bus-%d to bus-%d]' % (
+                            env.chronics_handler.get_name(), dst_step, line_to_disconnect,
+                            env.line_or_to_subid[line_to_disconnect], env.line_ex_to_subid[line_to_disconnect]))
+                        
+                        # to the destination time-step
+                        env.fast_forward_chronics(dst_step - 1)
+                        
+                        # Perform the initial "do nothing" action
+                        try:
+                            obs, reward, done, _ = env.step(env.action_space({}))
+                        except Grid2OpException as e:
+                            print(f"Grid2OpException during initial step: {e}")
+                            continue
+
+                        if done:
+                            break
+
+                        # disconnect the targeted line
+                        new_line_status_array = np.zeros(obs.rho.shape, dtype=np.int32)
+                        new_line_status_array[line_to_disconnect] = -1
+                        action = env.action_space({"set_line_status": new_line_status_array})
+
+                        try:
+                            obs, reward, done, _ = env.step(action)
+                        except Grid2OpException as e:
+                            print(f"Grid2OpException during line disconnection step: {e}")
+                            continue
+
+                        if obs.rho.max() < 1:
+                            # not necessary to do a dispatch
+                            continue
+                        else:
+                            # search a greedy action
+                            try:
+                                action = self.topology_search(dst_step=dst_step, substations=substations)
+                                obs_, reward, done, _ = env.step(action)
+                                self.save_sample(obs, action, obs_, dst_step, line_to_disconnect)
+                            except Grid2OpException as e:
+                                print(f"Grid2OpException during greedy action step: {e}")
+                                continue
+
+                    except Exception as e:
+                        print(f"Exception during scenario handling: {e}")
+                        continue
+
+
+    """def generate(self, LINES2ATTACK, substations:list):
         for episode in range(self.NUM_EPISODES):
             # traverse all attacks
             for line_to_disconnect in LINES2ATTACK:
@@ -246,4 +311,4 @@ class Teacher:
                         # search a greedy action
                         action = self.topology_search(dst_step=dst_step, substations=substations)
                         obs_, reward, done, _ = env.step(action)
-                        self.save_sample(obs, action, obs_, dst_step, line_to_disconnect)
+                        self.save_sample(obs, action, obs_, dst_step, line_to_disconnect)"""
