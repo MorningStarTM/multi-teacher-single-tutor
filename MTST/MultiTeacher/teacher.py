@@ -9,7 +9,7 @@ from collections import defaultdict
 from grid2op.Reward import L2RPNSandBoxScore
 from lightsim2grid import LightSimBackend
 from grid2op.Exceptions import *
-
+from MTST.Utils.logger import logging
 
 
 class Teacher:
@@ -45,7 +45,7 @@ class Teacher:
     def topology_search(self, dst_step, substations:list):
         obs = self.env.get_obs()
         min_rho, overflow_id = obs.rho.max(), obs.rho.argmax()
-        print("step-%s, line-%s(from bus-%d to bus-%d) overflows, max rho is %.5f" %
+        logging.info("step-%s, line-%s(from bus-%d to bus-%d) overflows, max rho is %.5f" %
             (dst_step, overflow_id, self.env.line_or_to_subid[overflow_id],
             self.env.line_ex_to_subid[overflow_id], obs.rho.max()))
         #all_actions = self.env.action_space.get_all_unitary_topologies_set(self.env.action_space)
@@ -229,7 +229,7 @@ class Teacher:
                     try:
                         env.reset()
                         dst_step = episode * 72 + random.randint(0, 72)  # a random sampling every 6 hours
-                        print('\n\n' + '*' * 50 + '\nScenario[%s]: at step[%d], disconnect line-%d(from bus-%d to bus-%d]' % (
+                        logging.info('\n\n' + '*' * 50 + '\nScenario[%s]: at step[%d], disconnect line-%d(from bus-%d to bus-%d]' % (
                             env.chronics_handler.get_name(), dst_step, line_to_disconnect,
                             env.line_or_to_subid[line_to_disconnect], env.line_ex_to_subid[line_to_disconnect]))
                         
@@ -273,6 +273,9 @@ class Teacher:
                     except Exception as e:
                         print(f"Exception during scenario handling: {e}")
                         continue
+
+        print(f"""\n\n #########################################\n\n
+                \t   SEARCH IS DONE    \n\n #########################################""")
 
 
     """def generate(self, LINES2ATTACK, substations:list):
