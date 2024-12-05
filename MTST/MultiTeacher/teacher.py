@@ -1,5 +1,6 @@
 import os
 import time
+import logging
 import random
 import grid2op
 import numpy as np
@@ -10,6 +11,16 @@ from grid2op.Reward import L2RPNSandBoxScore
 from lightsim2grid import LightSimBackend
 from grid2op.Exceptions import *
 from MTST.Utils.logger import logging
+
+
+# Configure the logger
+logging.basicConfig(
+    filename='generation_log.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 
 
 class Teacher:
@@ -211,6 +222,7 @@ class Teacher:
 
 
     def generate(self, LINES2ATTACK, substations: list):
+        logging.info("Start Generation")
         for episode in range(self.NUM_EPISODES):
             # traverse all attacks
             for line_to_disconnect in LINES2ATTACK:
@@ -274,9 +286,11 @@ class Teacher:
                         print(f"Exception during scenario handling: {e}")
                         continue
 
-        print(f"""\n\n #########################################\n\n
+        logging.info(f"""\n\n #########################################\n\n
                 \t   SEARCH IS DONE    \n\n #########################################""")
 
+        print(f"""\n\n #########################################\n\n
+                \t   SEARCH IS DONE    \n\n #########################################""")
 
     """def generate(self, LINES2ATTACK, substations:list):
         for episode in range(self.NUM_EPISODES):
